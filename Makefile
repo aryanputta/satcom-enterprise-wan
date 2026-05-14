@@ -1,5 +1,5 @@
 .PHONY: setup up down baseline inject-nat-failure inject-vpn-failure inject-bgp-failure \
-        inject-mtu-blackhole inject-loss collect analyze monitor test clean help
+        inject-mtu-blackhole inject-loss collect analyze monitor demo test clean help
 
 PYTHON := python3
 LAB_SCRIPTS := lab/scripts
@@ -20,6 +20,7 @@ help:
 	@echo "  make inject-loss        Inject 5%% packet loss via tc netem"
 	@echo "  make collect            Collect diagnostics (routes, BGP, VPN, pcaps)"
 	@echo "  make analyze            Run root cause analyzer on latest diagnostics"
+	@echo "  make demo               Live demo: auto-start API + cycle all 7 failure scenarios"
 	@echo "  make test               Run test suite"
 	@echo "  make clean              Tear down lab and clean captures"
 
@@ -106,6 +107,10 @@ monitor-no-api:
 monitor-profile:
 	@echo "[monitor] Switching to profile: $(PROFILE)"
 	$(PYTHON) monitor.py --profile $(PROFILE)
+
+demo:
+	@echo "[demo] Starting live demo — cycling all 7 SATCOM failure scenarios..."
+	$(PYTHON) monitor.py --demo
 
 test:
 	@echo "[test] Running test suite..."

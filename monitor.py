@@ -15,6 +15,7 @@ Usage:
   python3 monitor.py --api http://host:8000 # remote API
   python3 monitor.py --profile rain_fade    # switch impairment profile
   python3 monitor.py --no-api               # show only local lab/diagnostics state
+  python3 monitor.py --demo                 # auto-start API + cycle all failure scenarios
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
@@ -432,6 +434,127 @@ def render_header(api_ok: bool, profile: str, uptime: int) -> Panel:
     )
 
 
+# ── Demo mode ─────────────────────────────────────────────────────────────────
+
+DEMO_SCENARIOS: list[dict] = [
+    {
+        "profile": "baseline",
+        "duration": 18,
+        "title": "Healthy LEO link",
+        "narration": (
+            "SATCOM terminal locked to LEO constellation. "
+            "Latency ~45ms (LEO), throughput 140/28 Mbps, loss 0.1%. "
+            "BGP session established, NAT MASQUERADE active."
+        ),
+    },
+    {
+        "profile": "rain_fade",
+        "duration": 20,
+        "title": "Ka-band rain fade",
+        "narration": (
+            "Ka-band (26.5-40 GHz) is highly susceptible to rain attenuation. "
+            "Signal quality dropping below 0.45, SNR falling. "
+            "Adaptive coding shifts to QPSK 3/4 — throughput halved."
+        ),
+    },
+    {
+        "profile": "high_latency",
+        "duration": 20,
+        "title": "SATCOM congestion / BDP mismatch",
+        "narration": (
+            "Latency spike to 580ms. BDP = 150Mbps × 0.580s = 10.9 MB. "
+            "Default 64KB TCP window is 170x too small — link is idle 94% of the time. "
+            "BBR congestion control + tcp_rmem tuning required."
+        ),
+    },
+    {
+        "profile": "packet_loss",
+        "duration": 20,
+        "title": "RF interference — elevated packet loss",
+        "narration": (
+            "7% packet loss from adjacent-beam interference. "
+            "TCP CUBIC interprets loss as congestion — halves cwnd on every drop. "
+            "Effective throughput collapses to <5 Mbps despite healthy physical layer."
+        ),
+    },
+    {
+        "profile": "mtu_blackhole",
+        "duration": 20,
+        "title": "MTU black hole — PMTUD blocked",
+        "narration": (
+            "SATCOM WAN MTU set to 1400 (WireGuard overhead). "
+            "Upstream CGNAT firewall drops ICMP type-3 code-4 (frag-needed). "
+            "PMTUD fails silently — large packets dropped, TCP stalls. "
+            "Fix: iptables mangle --clamp-mss-to-pmtu on CE."
+        ),
+    },
+    {
+        "profile": "link_down",
+        "duration": 15,
+        "title": "Complete link failure — beam handoff timeout",
+        "narration": (
+            "Beam handoff exceeded 30s hold timer. BGP session torn down. "
+            "No default route at CE — enterprise LAN is fully isolated. "
+            "BGP timers 10/30 (vs default 60/180) will limit blackout to 30s max."
+        ),
+    },
+    {
+        "profile": "baseline",
+        "duration": 15,
+        "title": "Link restored — BGP reconvergence",
+        "narration": (
+            "Physical link restored. BGP OPEN/KEEPALIVE exchanged. "
+            "CE (AS65001) re-advertises 10.10.0.0/24, PoP reflects 192.168.100.0/24. "
+            "Routing converged — enterprise traffic flowing again."
+        ),
+    },
+]
+
+
+def _start_api_server(api_url: str) -> subprocess.Popen | None:
+    """Start uvicorn telemetry API as a subprocess. Returns Popen handle."""
+    api_dir = Path(__file__).parent / "telemetry" / "api"
+    if not (api_dir / "main.py").exists():
+        return None
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"],
+            cwd=api_dir,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return proc
+    except Exception:
+        return None
+
+
+def _wait_for_api(client: "TelemetryClient", timeout: float = 15.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if client.is_reachable():
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def render_demo_banner(scenario: dict, elapsed: float, remaining: float) -> Panel:
+    bar_width = 40
+    filled = int((elapsed / (elapsed + remaining)) * bar_width)
+    bar = "[cyan]" + "█" * filled + "[/cyan]" + "[dim]" + "░" * (bar_width - filled) + "[/dim]"
+    countdown = f"{remaining:.0f}s"
+
+    grid = Table.grid(padding=(0, 1))
+    grid.add_column(style="dim", width=12)
+    grid.add_column()
+    grid.add_row("Scenario",   f"[bold yellow]{scenario['title']}[/bold yellow]")
+    grid.add_row("Profile",    f"[cyan]{scenario['profile']}[/cyan]  →  next in {countdown}")
+    grid.add_row("",           bar)
+    grid.add_row("",           f"[dim]{scenario['narration']}[/dim]")
+
+    return Panel(grid, title="[bold magenta]DEMO MODE[/bold magenta]  [dim]— auto-cycling failure scenarios[/dim]",
+                 border_style="magenta")
+
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -440,6 +563,8 @@ def main() -> None:
     parser.add_argument("--profile", help="Switch to this impairment profile on start")
     parser.add_argument("--no-api", action="store_true", help="Skip API, show only lab/diagnostics state")
     parser.add_argument("--refresh", type=float, default=REFRESH_RATE, help="Refresh interval seconds")
+    parser.add_argument("--demo", action="store_true",
+                        help="Demo mode: auto-start API and cycle through all failure scenarios")
     args = parser.parse_args()
 
     if not HTTP_AVAILABLE:
@@ -447,9 +572,28 @@ def main() -> None:
         console.print("Continuing with API disabled...")
         args.no_api = True
 
+    # ── Demo mode: start API server if not already up ─────────────────────────
+    _api_proc: subprocess.Popen | None = None
+    if args.demo and not args.no_api:
+        client_probe = TelemetryClient(args.api)
+        if not client_probe.is_reachable():
+            console.print("[cyan]Demo mode: starting telemetry API...[/cyan]")
+            _api_proc = _start_api_server(args.api)
+            if _api_proc is None:
+                console.print("[red]Could not start API. Check telemetry/api/main.py exists.[/red]")
+                args.no_api = True
+            else:
+                if not _wait_for_api(client_probe, timeout=15.0):
+                    console.print("[yellow]API did not start in time — continuing without it.[/yellow]")
+                    _api_proc.terminate()
+                    _api_proc = None
+                    args.no_api = True
+                else:
+                    console.print("[green]API ready.[/green]")
+
     client = TelemetryClient(args.api) if not args.no_api else None
 
-    if client and args.profile:
+    if client and args.profile and not args.demo:
         if client.switch_profile(args.profile):
             console.print(f"[green]Switched to profile: {args.profile}[/green]")
         else:
@@ -459,12 +603,32 @@ def main() -> None:
     active_profile = args.profile or "baseline"
     start_time = time.time()
 
+    # ── Demo scenario state ────────────────────────────────────────────────────
+    demo_scenario_idx = 0
+    demo_scenario_start = time.time()
+    demo_banner: Panel | None = None
+
+    if args.demo and client:
+        first = DEMO_SCENARIOS[0]
+        client.switch_profile(first["profile"])
+        active_profile = first["profile"]
+
+    # ── Layout ─────────────────────────────────────────────────────────────────
     layout = Layout()
-    layout.split_column(
-        Layout(name="header", size=3),
-        Layout(name="main"),
-        Layout(name="bottom", size=20),
-    )
+    if args.demo:
+        layout.split_column(
+            Layout(name="demo_banner", size=7),
+            Layout(name="header", size=3),
+            Layout(name="main"),
+            Layout(name="bottom", size=20),
+        )
+    else:
+        layout.split_column(
+            Layout(name="header", size=3),
+            Layout(name="main"),
+            Layout(name="bottom", size=20),
+        )
+
     layout["main"].split_row(
         Layout(name="telemetry"),
         Layout(name="osi", ratio=1),
@@ -474,34 +638,62 @@ def main() -> None:
         Layout(name="rca"),
     )
 
-    with Live(layout, refresh_per_second=int(1 / args.refresh), screen=True) as live:
-        while True:
-            uptime = int(time.time() - start_time)
-            api_ok = False
-            metrics = None
+    try:
+        with Live(layout, refresh_per_second=int(1 / args.refresh), screen=True):
+            while True:
+                now = time.time()
+                uptime = int(now - start_time)
+                api_ok = False
+                metrics = None
 
-            if client:
-                api_ok = client.is_reachable()
-                if api_ok:
-                    metrics = client.get_current()
-                    new_history = client.get_history(HISTORY_WINDOW)
-                    if new_history:
-                        history.clear()
-                        history.extend(new_history)
-                    if metrics:
-                        active_profile = metrics.get("link_state", active_profile)
+                if client:
+                    api_ok = client.is_reachable()
+                    if api_ok:
+                        metrics = client.get_current()
+                        new_history = client.get_history(HISTORY_WINDOW)
+                        if new_history:
+                            history.clear()
+                            history.extend(new_history)
+                        if metrics:
+                            active_profile = metrics.get("link_state", active_profile)
 
-            lab_status = get_lab_status()
-            diag = get_latest_diagnostics()
-            rca  = get_rca_for(diag)
+                # ── Demo: advance scenario when timer expires ──────────────────
+                if args.demo and client and api_ok:
+                    scenario = DEMO_SCENARIOS[demo_scenario_idx]
+                    elapsed_in_scenario = now - demo_scenario_start
+                    remaining = scenario["duration"] - elapsed_in_scenario
 
-            layout["header"].update(render_header(api_ok, active_profile, uptime))
-            layout["telemetry"].update(render_telemetry_panel(metrics, list(history)))
-            layout["osi"].update(render_osi_health(metrics, rca))
-            layout["lab"].update(render_lab_status(lab_status))
-            layout["rca"].update(render_rca_panel(rca, diag))
+                    if remaining <= 0:
+                        demo_scenario_idx = (demo_scenario_idx + 1) % len(DEMO_SCENARIOS)
+                        scenario = DEMO_SCENARIOS[demo_scenario_idx]
+                        client.switch_profile(scenario["profile"])
+                        active_profile = scenario["profile"]
+                        demo_scenario_start = now
+                        elapsed_in_scenario = 0.0
+                        remaining = float(scenario["duration"])
 
-            time.sleep(args.refresh)
+                    demo_banner = render_demo_banner(scenario, elapsed_in_scenario, remaining)
+                elif args.demo:
+                    scenario = DEMO_SCENARIOS[demo_scenario_idx]
+                    demo_banner = render_demo_banner(scenario, 0, float(scenario["duration"]))
+
+                lab_status = get_lab_status()
+                diag = get_latest_diagnostics()
+                rca  = get_rca_for(diag)
+
+                if args.demo and demo_banner is not None:
+                    layout["demo_banner"].update(demo_banner)
+
+                layout["header"].update(render_header(api_ok, active_profile, uptime))
+                layout["telemetry"].update(render_telemetry_panel(metrics, list(history)))
+                layout["osi"].update(render_osi_health(metrics, rca))
+                layout["lab"].update(render_lab_status(lab_status))
+                layout["rca"].update(render_rca_panel(rca, diag))
+
+                time.sleep(args.refresh)
+    finally:
+        if _api_proc is not None:
+            _api_proc.terminate()
 
 
 if __name__ == "__main__":
