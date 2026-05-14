@@ -1,0 +1,94 @@
+{
+  "uid": "satcom-overview",
+  "title": "SATCOM Enterprise WAN - Terminal Overview",
+  "tags": ["satcom", "network", "wan"],
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "5s",
+  "time": {"from": "now-15m", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Link State",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "targets": [{"expr": "satcom_link_up", "legendFormat": "Link"}],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}],
+          "thresholds": {"steps": [{"value": 0, "color": "red"}, {"value": 1, "color": "green"}]}
+        }
+      }
+    },
+    {
+      "id": 2, "type": "stat", "title": "VPN State",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "targets": [{"expr": "satcom_vpn_up", "legendFormat": "VPN"}],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}]
+        }
+      }
+    },
+    {
+      "id": 3, "type": "stat", "title": "BGP Session",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "targets": [{"expr": "satcom_bgp_established", "legendFormat": "BGP"}],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "ESTABLISHED", "color": "green"}}}]
+        }
+      }
+    },
+    {
+      "id": 4, "type": "stat", "title": "Latency (ms)",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "targets": [{"expr": "satcom_latency_ms", "legendFormat": "Latency"}],
+      "fieldConfig": {"defaults": {"unit": "ms", "thresholds": {"steps": [{"value": 0, "color": "green"}, {"value": 100, "color": "yellow"}, {"value": 200, "color": "red"}]}}}
+    },
+    {
+      "id": 5, "type": "stat", "title": "Packet Loss (%)",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+      "targets": [{"expr": "satcom_packet_loss_percent", "legendFormat": "Loss"}],
+      "fieldConfig": {"defaults": {"unit": "percent", "thresholds": {"steps": [{"value": 0, "color": "green"}, {"value": 1, "color": "yellow"}, {"value": 5, "color": "red"}]}}}
+    },
+    {
+      "id": 6, "type": "stat", "title": "Signal Quality",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+      "targets": [{"expr": "satcom_signal_quality", "legendFormat": "Signal"}],
+      "fieldConfig": {"defaults": {"thresholds": {"steps": [{"value": 0, "color": "red"}, {"value": 0.7, "color": "yellow"}, {"value": 0.9, "color": "green"}]}}}
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Throughput Over Time",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "targets": [
+        {"expr": "satcom_downlink_mbps", "legendFormat": "Downlink"},
+        {"expr": "satcom_uplink_mbps", "legendFormat": "Uplink"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "Mbps"}}
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Latency and Jitter",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "targets": [
+        {"expr": "satcom_latency_ms", "legendFormat": "Latency ms"},
+        {"expr": "satcom_jitter_ms", "legendFormat": "Jitter ms"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ms"}}
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Modem Temperature",
+      "gridPos": {"h": 6, "w": 8, "x": 0, "y": 12},
+      "targets": [{"expr": "satcom_modem_temperature_c", "legendFormat": "Temp C"}],
+      "fieldConfig": {"defaults": {"unit": "celsius", "thresholds": {"steps": [{"value": 0, "color": "green"}, {"value": 65, "color": "yellow"}, {"value": 80, "color": "red"}]}}}
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "NAT Table Size",
+      "gridPos": {"h": 6, "w": 8, "x": 8, "y": 12},
+      "targets": [{"expr": "satcom_nat_table_size", "legendFormat": "NAT entries"}]
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Active Route Count",
+      "gridPos": {"h": 6, "w": 8, "x": 16, "y": 12},
+      "targets": [{"expr": "satcom_route_count", "legendFormat": "Routes"}]
+    }
+  ]
+}

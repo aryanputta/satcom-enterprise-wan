@@ -1,0 +1,54 @@
+# Layer 4 - Transport layer rules
+
+rules:
+  - id: L4_VPN_BLOCKED
+    name: VPN UDP Port Blocked by Firewall
+    description: >
+      VPN tunnel cannot establish because UDP traffic to the VPN port is blocked
+      by an intermediate firewall, CGNAT device, or CE firewall rule.
+    match:
+      vpn_state: {in: ["down", "handshaking"]}
+      pcap_keywords: ["UDP", "no response", "51820"]
+    confidence: 0.90
+    osi_layer: "Layer 4"
+    remediation: >
+      1. WireGuard uses UDP 51820 by default.
+      2. Check CE firewall: iptables -L FORWARD -n | grep 51820
+      3. If blocked: iptables -D FORWARD -p udp --dport 51820 -j DROP
+      4. Test from CE: nc -u <pop_ip> 51820 (should not timeout if unblocked)
+      5. If carrier-grade NAT: WireGuard handles NAT traversal but some CGNATs block UDP entirely.
+      6. Workaround: Run WireGuard on UDP 443 or use stunnel.
+
+  - id: L4_HIGH_RETRANSMISSIONS
+    name: TCP Retransmission Storm
+    description: >
+      High TCP retransmission rate indicates packet loss on the path.
+      Throughput collapses as TCP enters loss recovery.
+      Common on SATCOM links with > 1% loss.
+    match:
+      packet_loss_percent: {gte: 1}
+      pcap_keywords: ["TCP Retransmission", "Dup ACK"]
+    confidence: 0.87
+    osi_layer: "Layer 4"
+    remediation: >
+      1. Confirm packet loss with: ping -c 100 <remote> | tail -3
+      2. Check if loss is on SATCOM segment: traceroute with loss stats.
+      3. For persistent SATCOM loss: deploy TCP performance enhancing proxy (TCP PEP).
+      4. Enable BBR congestion control: sysctl -w net.ipv4.tcp_congestion_control=bbr
+      5. For UDP applications: add FEC (forward error correction) at app layer.
+
+  - id: L4_UDP_LOSS
+    name: UDP Application Degradation
+    description: >
+      UDP-based applications (video conferencing, VoIP, QUIC) suffering
+      from packet loss. Unlike TCP, UDP does not retransmit — application sees gaps.
+    match:
+      packet_loss_percent: {gte: 2}
+      application_protocol: {in: ["UDP", "QUIC", "RTP"]}
+    confidence: 0.83
+    osi_layer: "Layer 4"
+    remediation: >
+      1. Increase application jitter buffer for RTP/VoIP.
+      2. Enable QUIC loss recovery at app layer.
+      3. Apply traffic shaping to reduce SATCOM link congestion.
+      4. Use forward error correction at transport layer (FECFRAME RFC 6363).

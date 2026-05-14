@@ -1,0 +1,32 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Lab state — not committed
+captures/*.pcap
+experiments/*/diagnostics.json
+experiments/*/ping_*.txt
+experiments/*/iperf3_*.json
+experiments/*/traceroute.txt
+experiments/*/routes_*.txt
+experiments/snapshot_*/
+
+# WireGuard private keys — never commit
+lab/vpn/wireguard/keys/
+
+# Grafana runtime state
+telemetry/grafana/data/
+
+# Docker volumes
+.docker/
+
+# IDE
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,60 @@
+# ContainerLab topology — alternative to namespace scripts
+# Uses FRR containers for real BGP daemon execution
+# Requires: containerlab (https://containerlab.dev)
+#
+# Deploy: sudo containerlab deploy -t lab/containerlab.yml
+# Destroy: sudo containerlab destroy -t lab/containerlab.yml
+#
+# Note: the namespace scripts (setup_lab.sh) are the primary lab method.
+# This file provides an FRR-container-based alternative for production-closer BGP testing.
+
+name: satcom-enterprise-wan
+
+topology:
+  nodes:
+    enterprise:
+      kind: linux
+      image: alpine:3.19
+
+    ce-router:
+      kind: linux
+      image: frrouting/frr:9.1.0
+      binds:
+        - lab/frr/ce-router/frr.conf:/etc/frr/frr.conf:ro
+
+    satcom-emulator:
+      kind: linux
+      image: alpine:3.19
+      exec:
+        - "apk add iproute2 iptables"
+        - "sysctl -w net.ipv4.ip_forward=1"
+        - "tc qdisc add dev eth1 root netem delay 22ms 3ms distribution normal"
+        - "tc qdisc add dev eth2 root netem delay 22ms 3ms distribution normal"
+
+    pop-router:
+      kind: linux
+      image: frrouting/frr:9.1.0
+      binds:
+        - lab/frr/pop-router/frr.conf:/etc/frr/frr.conf:ro
+
+    cloud-router:
+      kind: linux
+      image: frrouting/frr:9.1.0
+      binds:
+        - lab/frr/cloud-router/frr.conf:/etc/frr/frr.conf:ro
+
+    app-server:
+      kind: linux
+      image: nginx:alpine
+
+  links:
+    # enterprise <-> ce-router (LAN)
+    - endpoints: ["enterprise:eth0", "ce-router:eth0"]
+    # ce-router <-> satcom-emulator (WAN)
+    - endpoints: ["ce-router:eth1", "satcom-emulator:eth1"]
+    # satcom-emulator <-> pop-router
+    - endpoints: ["satcom-emulator:eth2", "pop-router:eth0"]
+    # pop-router <-> cloud-router
+    - endpoints: ["pop-router:eth1", "cloud-router:eth0"]
+    # cloud-router <-> app-server
+    - endpoints: ["cloud-router:eth1", "app-server:eth0"]

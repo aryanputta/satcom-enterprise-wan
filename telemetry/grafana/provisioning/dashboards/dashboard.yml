@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: satcom-dashboards
+    orgId: 1
+    folder: SATCOM
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards

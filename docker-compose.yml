@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  telemetry-api:
+    build:
+      context: ./telemetry
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - SATCOM_SIMULATE_DEGRADATION=false
+      - SATCOM_LATENCY_MS=45
+      - SATCOM_LOSS_PERCENT=0.5
+    networks:
+      - satcom-mgmt
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    volumes:
+      - ./telemetry/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    networks:
+      - satcom-mgmt
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.2
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=satcom123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - ./telemetry/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - ./telemetry/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - satcom-mgmt
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+networks:
+  satcom-mgmt:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24

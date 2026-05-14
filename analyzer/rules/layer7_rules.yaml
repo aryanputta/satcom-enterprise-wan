@@ -1,0 +1,38 @@
+# Layer 7 - Application layer rules
+
+rules:
+  - id: L7_DNS_FAILURE
+    name: DNS Resolution Failure
+    description: >
+      DNS queries are being dropped or not responded to.
+      Application appears completely broken despite L3/L4 connectivity.
+      Classic symptom: ping to IP succeeds, ping to hostname fails.
+    match:
+      pcap_keywords: ["DNS", "No response", "NXDOMAIN"]
+      dns_queries_unanswered: true
+    confidence: 0.93
+    osi_layer: "Layer 7"
+    remediation: >
+      1. Test DNS directly: dig +short google.com @8.8.8.8 (bypass local resolver)
+      2. Check firewall: iptables -L FORWARD -n | grep 53
+      3. If blocked: iptables -D FORWARD -p udp --dport 53 -j DROP
+      4. Check if internal DNS server is reachable: nc -zv <dns_server> 53
+      5. Verify /etc/resolv.conf has correct nameserver entry.
+      6. If SATCOM provider intercepts DNS: use DNS-over-HTTPS (DoH) or DNS-over-TLS.
+
+  - id: L7_APP_TIMEOUT
+    name: Application Timeout — High Latency
+    description: >
+      Application connections time out despite network being up.
+      Cause: SATCOM high latency (> 600ms RTT) exceeds application timeout defaults.
+    match:
+      latency_ms: {gte: 200}
+      application_timeout: true
+    confidence: 0.85
+    osi_layer: "Layer 7"
+    remediation: >
+      1. Increase application connection timeout settings.
+      2. Enable TCP SACK and large window scaling: sysctl -w net.ipv4.tcp_sack=1
+      3. Increase TCP initial window: sysctl -w net.ipv4.tcp_init_cwnd=30
+      4. Deploy TCP acceleration proxy (PEP) for high-latency path optimization.
+      5. Review application for synchronous blocking calls — SATCOM RTT makes these very slow.

@@ -1,0 +1,31 @@
+# Layer 2 - Data Link rules
+
+rules:
+  - id: L2_INTERFACE_DOWN
+    name: Interface Down
+    description: Network interface is administratively or operationally down
+    match:
+      interface_down_keywords: ["NO-CARRIER", "DOWN", "state DOWN"]
+    confidence: 0.95
+    osi_layer: "Layer 2"
+    remediation: >
+      1. Run: ip link show <interface>
+      2. If admin-down: ip link set <interface> up
+      3. If NO-CARRIER: check physical cable or SFP module.
+      4. In namespace: ip netns exec <ns> ip link set <if> up
+
+  - id: L2_ARP_FAILURE
+    name: ARP Resolution Failure
+    description: >
+      Host can reach default gateway at L3 but no ARP resolution —
+      indicates VLAN mismatch, wrong subnet, or interface misconfiguration.
+    match:
+      pcap_keywords: ["who-has", "ARP", "no response"]
+      ping_local_fail: true
+    confidence: 0.85
+    osi_layer: "Layer 2"
+    remediation: >
+      1. Check ARP table: ip neigh show
+      2. Verify interface IP is in same subnet as gateway.
+      3. Check for VLAN tagging issues if using 802.1Q.
+      4. Try: arping -I <interface> <gateway_ip>

@@ -1,0 +1,89 @@
+# Layer 3 - Network layer rules
+
+rules:
+  - id: L3_NO_DEFAULT_ROUTE
+    name: Missing Default Route
+    description: No default route (0.0.0.0/0) in routing table — traffic to unknown destinations black-holed
+    match:
+      route_count: {lte: 1}
+      missing_default_route: true
+    confidence: 0.93
+    osi_layer: "Layer 3"
+    remediation: >
+      1. Check routing table: ip route show
+      2. Add default route: ip route add default via <gateway_ip>
+      3. If BGP is configured, verify BGP session is established and advertising default.
+      4. Check if DHCP-assigned default route was lost on interface bounce.
+
+  - id: L3_BGP_DOWN
+    name: BGP Session Not Established
+    description: >
+      BGP peer session is not in ESTABLISHED state.
+      Routes from peer are absent, causing traffic black-hole or fallback to static.
+    match:
+      bgp_state: {in: ["active", "idle", "connect"]}
+    confidence: 0.92
+    osi_layer: "Layer 3"
+    remediation: >
+      1. Check BGP state: vtysh -c "show bgp summary"
+      2. Verify remote-as matches peer's configured ASN.
+      3. Check IP connectivity to BGP peer: ping <peer_ip>
+      4. Verify BGP port 179 is not blocked: nc -zv <peer_ip> 179
+      5. Review BGP logs: journalctl -u frr | grep bgp
+      6. Common fix: correct ASN mismatch in frr.conf, then: systemctl restart frr
+
+  - id: L3_NAT_BROKEN
+    name: NAT Masquerade Missing
+    description: >
+      Outbound NAT is not configured or was removed.
+      Private LAN traffic reaches WAN with RFC1918 source addresses
+      that are dropped at the upstream provider.
+    match:
+      nat_masquerade_missing: true
+    confidence: 0.91
+    osi_layer: "Layer 3"
+    remediation: >
+      1. Check NAT table: iptables -t nat -L -n
+      2. If MASQUERADE rule is missing, add it:
+         iptables -t nat -A POSTROUTING -o <wan_if> -j MASQUERADE
+      3. Also check FORWARD chain allows LAN->WAN traffic.
+      4. Verify with tcpdump on WAN interface: source IPs should be WAN IP, not 10.x.x.x
+
+  - id: L3_MTU_BLACKHOLE
+    name: MTU Black Hole — VPN Path
+    description: >
+      Large packets are silently dropped inside VPN tunnel.
+      Small pings succeed but large transfers fail.
+      ICMP fragmentation-needed messages are blocked (PMTUD failure).
+    match:
+      large_ping_fail: true
+      small_ping_success: true
+      vpn_state: {in: ["up"]}
+    confidence: 0.91
+    osi_layer: "Layer 3 / Layer 4"
+    remediation: >
+      1. Verify current MTU: ip link show <wg_interface>
+      2. Calculate correct VPN MTU:
+         WireGuard overhead: 80 bytes
+         SATCOM overhead: varies (estimate 60-140 bytes extra)
+         Safe MTU: 1280 (IPv6 minimum, handles all overhead)
+      3. Set MTU: ip link set wg0 mtu 1280
+      4. Set MSS clamping: iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+      5. Verify ICMP type 3 (frag-needed) is NOT blocked in firewall.
+      6. Test: ping -M do -s 1300 <remote_ip> — should get frag-needed, not silent drop
+
+  - id: L3_ASYMMETRIC_ROUTING
+    name: Asymmetric Routing Detected
+    description: >
+      Return path differs from forward path.
+      Stateful firewall drops return traffic because no matching session entry.
+    match:
+      pcap_keywords: ["SYN without SYN-ACK", "asymmetric"]
+      traceroute_different_paths: true
+    confidence: 0.78
+    osi_layer: "Layer 3"
+    remediation: >
+      1. Run traceroute in both directions and compare paths.
+      2. Check route policy (ip rule) — multiple routing tables may cause asymmetry.
+      3. If using multiple WAN links, ensure stateful firewall tracks sessions by outbound interface.
+      4. Consider policy-based routing to force symmetric path.

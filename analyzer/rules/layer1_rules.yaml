@@ -1,0 +1,64 @@
+# Layer 1 - Physical / SATCOM link rules
+# Each rule matches against telemetry + interface status fields
+# confidence: base confidence when rule fires
+# evidence_keys: telemetry keys that must be checked
+# remediation: actionable fix
+
+rules:
+  - id: L1_LINK_DOWN
+    name: Satellite Link Down
+    description: Physical SATCOM link is completely down — no signal
+    match:
+      link_state: "down"
+      packet_loss_percent: {gte: 99}
+    confidence: 0.97
+    osi_layer: "Layer 1"
+    remediation: >
+      1. Verify dish power and cable connections.
+      2. Check obstruction percentage — dish may be physically blocked.
+      3. Check modem temperature — thermal shutdown if > 85C.
+      4. Review satellite operator status page for outage.
+      5. Hard reboot terminal after verifying physical connectivity.
+
+  - id: L1_HIGH_LOSS
+    name: High Packet Loss — Signal Degradation
+    description: >
+      Packet loss >= 5% indicates signal degradation, likely weather-related
+      rain fade, obstruction, or interference on Ka-band link.
+    match:
+      packet_loss_percent: {gte: 5}
+      link_state: {in: ["up", "degraded"]}
+    confidence: 0.88
+    osi_layer: "Layer 1"
+    remediation: >
+      1. Check obstruction_percent — if > 10%, physical obstruction is likely.
+      2. Check weather at dish location — Ka-band is heavily rain-attenuated.
+      3. Verify dish pointing: signal_quality < 0.7 with clear sky = misalignment.
+      4. Check SNR: < 15dB indicates link margin insufficient.
+      5. Contact SATCOM provider if obstruction < 5% and loss persists.
+
+  - id: L1_SIGNAL_DEGRADED
+    name: Signal Quality Below Threshold
+    description: signal_quality < 0.7 indicates marginal link conditions
+    match:
+      signal_quality: {lt: 0.7}
+    confidence: 0.82
+    osi_layer: "Layer 1"
+    remediation: >
+      1. Verify dish pointing with provider alignment tool.
+      2. Check for nearby RF interference sources.
+      3. Inspect physical dish for damage, ice, or debris.
+      4. Check SNR — < 10dB is critically low for data service.
+
+  - id: L1_THERMAL
+    name: Modem Thermal Throttle
+    description: Temperature > 75C triggers throughput reduction or reboot
+    match:
+      modem_temperature_c: {gte: 75}
+    confidence: 0.79
+    osi_layer: "Layer 1"
+    remediation: >
+      1. Ensure dish is not in direct sunlight without ventilation.
+      2. Clean ventilation openings on outdoor unit.
+      3. Check if modem is wall-mounted in enclosed space.
+      4. Consider repositioning dish for shade during peak heat.
