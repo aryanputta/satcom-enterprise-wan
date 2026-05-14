@@ -1,0 +1,133 @@
+---
+# SATCOM Enterprise WAN — Containerlab topology
+#
+# Replaces manual namespace scripts with containerized FRR nodes.
+# Each node runs frrouting/frr:latest with real BGP daemons.
+#
+# Prerequisites:
+#   sudo apt install containerlab   (or see containerlab.dev/install)
+#   docker pull frrouting/frr:latest
+#   docker pull nicolaka/netshoot:latest
+#
+# Usage:
+#   sudo clab deploy -t satcom-wan.yml
+#   sudo clab destroy -t satcom-wan.yml
+#   sudo clab inspect -t satcom-wan.yml
+#
+# After deploy, reach nodes via:
+#   sudo docker exec -it clab-satcom-wan-ce vtysh
+#   sudo docker exec -it clab-satcom-wan-pop vtysh
+#
+# Inject netem impairment on SATCOM link (from host):
+#   sudo tc qdisc add dev clab-satcom-wan-satcom-emulator-eth1 root netem \
+#        delay 45ms 3ms distribution normal loss 0.1%
+#
+# IP plan mirrors the namespace lab:
+#   enterprise LAN:   10.10.0.0/24
+#   CE WAN transit:   100.64.0.0/30
+#   SATCOM-PoP:       100.65.0.0/30
+#   PoP-Cloud:        172.16.0.0/30
+#   Cloud VPC:        192.168.100.0/24
+
+name: satcom-wan
+
+topology:
+  defaults:
+    kind: linux
+
+  nodes:
+    # ── Enterprise client host ──────────────────────────────────────────────
+    enterprise:
+      kind: linux
+      image: nicolaka/netshoot:latest
+      exec:
+        - ip addr add 10.10.0.10/24 dev eth1
+        - ip route add default via 10.10.0.1
+        - "ip route add 192.168.100.0/24 via 10.10.0.1 || true"
+
+    # ── Customer Edge router (BGP AS 65001, NAT, WireGuard endpoint) ───────
+    ce:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - ../frr/ce-router/frr.conf:/etc/frr/frr.conf:ro
+      exec:
+        # LAN interface
+        - ip addr add 10.10.0.1/24 dev eth1
+        # WAN interface (SATCOM-facing)
+        - ip addr add 100.64.0.1/30 dev eth2
+        # Enable IP forwarding
+        - sysctl -w net.ipv4.ip_forward=1
+        # NAT: MASQUERADE enterprise LAN through WAN interface
+        - iptables -t nat -A POSTROUTING -s 10.10.0.0/24 -o eth2 -j MASQUERADE
+        # MSS clamping to prevent MTU black hole (WireGuard overhead)
+        - iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+        # Start FRR daemons
+        - /usr/lib/frr/zebra -d -f /etc/frr/frr.conf
+        - /usr/lib/frr/bgpd  -d -f /etc/frr/frr.conf
+
+    # ── SATCOM WAN emulator (netem impairment injection point) ─────────────
+    satcom-emulator:
+      kind: linux
+      image: nicolaka/netshoot:latest
+      exec:
+        - ip addr add 100.64.0.2/30 dev eth1
+        - ip addr add 100.65.0.1/30 dev eth2
+        - sysctl -w net.ipv4.ip_forward=1
+        # Baseline netem: 45ms ±3ms, 0.1% loss (LEO SATCOM profile)
+        - tc qdisc add dev eth2 root netem delay 45ms 3ms distribution normal loss 0.1% corrupt 0.01%
+        # Static routing — forward between CE and PoP
+        - ip route add 10.10.0.0/24    via 100.64.0.1
+        - ip route add 192.168.100.0/24 via 100.65.0.2
+
+    # ── Cloud PoP router (BGP AS 65002, route reflector for cloud-router) ──
+    pop:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - ../frr/pop-router/frr.conf:/etc/frr/frr.conf:ro
+      exec:
+        - ip addr add 100.65.0.2/30 dev eth1
+        - ip addr add 172.16.0.1/30 dev eth2
+        - sysctl -w net.ipv4.ip_forward=1
+        - /usr/lib/frr/zebra -d -f /etc/frr/frr.conf
+        - /usr/lib/frr/bgpd  -d -f /etc/frr/frr.conf
+
+    # ── Cloud VPC router (iBGP AS 65002, route reflector client) ───────────
+    cloud-router:
+      kind: linux
+      image: frrouting/frr:latest
+      binds:
+        - ../frr/cloud-router/frr.conf:/etc/frr/frr.conf:ro
+      exec:
+        - ip addr add 172.16.0.2/30 dev eth1
+        - ip addr add 192.168.100.1/24 dev eth2
+        - sysctl -w net.ipv4.ip_forward=1
+        - /usr/lib/frr/zebra -d -f /etc/frr/frr.conf
+        - /usr/lib/frr/bgpd  -d -f /etc/frr/frr.conf
+
+    # ── Application server ──────────────────────────────────────────────────
+    app-server:
+      kind: linux
+      image: nicolaka/netshoot:latest
+      exec:
+        - ip addr add 192.168.100.10/24 dev eth1
+        - ip route add default via 192.168.100.1
+        # Start simple HTTP echo server on port 80
+        - "nohup python3 -m http.server 80 --bind 0.0.0.0 &>/tmp/http.log &"
+
+  links:
+    # enterprise ←→ ce (LAN)
+    - endpoints: ["enterprise:eth1", "ce:eth1"]
+
+    # ce ←→ satcom-emulator (WAN uplink — netem here)
+    - endpoints: ["ce:eth2", "satcom-emulator:eth1"]
+
+    # satcom-emulator ←→ pop (cloud-side WAN)
+    - endpoints: ["satcom-emulator:eth2", "pop:eth1"]
+
+    # pop ←→ cloud-router (PoP→VPC interconnect)
+    - endpoints: ["pop:eth2", "cloud-router:eth1"]
+
+    # cloud-router ←→ app-server (VPC LAN)
+    - endpoints: ["cloud-router:eth2", "app-server:eth1"]

@@ -1,5 +1,7 @@
 .PHONY: setup up down baseline inject-nat-failure inject-vpn-failure inject-bgp-failure \
-        inject-mtu-blackhole inject-loss collect analyze monitor demo test clean help
+        inject-mtu-blackhole inject-loss collect analyze monitor demo \
+        lab-frr lab-ipv6 sdwan-dry-run pep-proxy bgp-bench clab-up clab-down \
+        test clean help
 
 PYTHON := python3
 LAB_SCRIPTS := lab/scripts
@@ -111,6 +113,53 @@ monitor-profile:
 demo:
 	@echo "[demo] Starting live demo — cycling all 7 SATCOM failure scenarios..."
 	$(PYTHON) monitor.py --demo
+
+# ── Real subsystems ────────────────────────────────────────────────────────────
+
+lab-frr:
+	@echo "[frr] Starting FRR daemons inside namespaces (requires Linux + frr package)..."
+	sudo bash lab/scripts/setup_frr_namespaces.sh
+
+lab-ipv6:
+	@echo "[ipv6] Configuring IPv6 dual-stack on all namespaces..."
+	sudo bash lab/scripts/setup_ipv6.sh
+
+sdwan-dry-run:
+	@echo "[sdwan] Running SD-WAN policy engine in dry-run mode..."
+	$(PYTHON) -c "\
+import sys; sys.path.insert(0,'sdwan'); \
+from policy_engine import PolicyEngine, default_lab_links; \
+e = PolicyEngine(links=default_lab_links()); \
+d = e.run_policy(); \
+cmds = e.apply(d, dry_run=True); \
+[print(c) for c in cmds]; \
+import json; print(json.dumps(e.get_summary(), indent=2))"
+
+pep-proxy:
+	@echo "[pep] Starting TCP PEP proxy on :8080 → $(UPSTREAM_HOST):$(UPSTREAM_PORT)..."
+	$(PYTHON) tcp_pep/pep_proxy.py \
+		--listen-port 8080 \
+		--upstream-host $(or $(UPSTREAM_HOST),192.168.100.10) \
+		--upstream-port $(or $(UPSTREAM_PORT),80)
+
+bgp-bench:
+	@echo "[bgp] Running BGP convergence benchmark (3 cycles)..."
+	$(PYTHON) -c "\
+import sys; sys.path.insert(0,'analyzer'); sys.path.insert(0,'lab/frr'); \
+from frr_agent import make_agent; \
+from bgp_convergence import ConvergenceBenchmark; \
+agent = make_agent('ns-ce'); \
+b = ConvergenceBenchmark(agent, '100.65.0.2', expected_prefixes=2, timeout_s=60); \
+b.run_n(3); \
+import json; print(json.dumps(b.summary_stats(), indent=2))"
+
+clab-up:
+	@echo "[clab] Deploying Containerlab topology..."
+	sudo clab deploy -t containerlab/satcom-wan.yml
+
+clab-down:
+	@echo "[clab] Destroying Containerlab topology..."
+	sudo clab destroy -t containerlab/satcom-wan.yml --cleanup
 
 test:
 	@echo "[test] Running test suite..."
