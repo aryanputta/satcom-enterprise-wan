@@ -35,7 +35,7 @@ nat_failure)
     ip netns exec ns-ce tcpdump -q -i eth1 -w "$PCAP_DIR/ce_wan.pcap" -G 15 -W 1 &>/dev/null &
     ip netns exec ns-enterprise ping -c 10 192.168.100.10 2>&1 | tee "$OUT_DIR/ping_result.txt" || true
     wait
-    python3 scripts/write_diagnostics.py nat_failure "NAT masquerade removed" "Layer3_NAT"
+    python3 "$(dirname "$0")/write_diagnostics.py" nat_failure "NAT masquerade removed" "Layer3_NAT"
     ;;
 
 vpn_failure)
@@ -47,7 +47,7 @@ vpn_failure)
     ip netns exec ns-ce tcpdump -q -i eth1 -w "$PCAP_DIR/ce_wan.pcap" -G 15 -W 1 &>/dev/null &
     sleep 15
     wait
-    python3 scripts/write_diagnostics.py vpn_failure "WireGuard UDP 51820 blocked" "Layer4_VPN"
+    python3 "$(dirname "$0")/write_diagnostics.py" vpn_failure "WireGuard UDP 51820 blocked" "Layer4_VPN"
     ;;
 
 bgp_failure)
@@ -69,7 +69,7 @@ router bgp 65001
 FRREOF
     log "BGP misconfiguration written. In a real FRR deployment this would be loaded with 'vtysh -f'."
     log "Simulating BGP session down state..."
-    python3 scripts/write_diagnostics.py bgp_failure "BGP ASN mismatch: CE=65001 expects 65002, peer advertising 65999" "Layer3_BGP"
+    python3 "$(dirname "$0")/write_diagnostics.py" bgp_failure "BGP ASN mismatch: CE=65001 expects 65002, peer advertising 65999" "Layer3_BGP"
     ;;
 
 mtu_blackhole)
@@ -86,7 +86,7 @@ mtu_blackhole)
     ip netns exec ns-satcom tcpdump -q -i eth0 -w "$PCAP_DIR/satcom_wan.pcap" -G 10 -W 1 &>/dev/null &
     ip netns exec ns-enterprise ping -c 20 -s 1400 192.168.100.10 > /dev/null 2>&1 || true
     wait
-    python3 scripts/write_diagnostics.py mtu_blackhole "MTU black hole: large packets silently dropped, ICMP frag-needed blocked" "Layer3_Layer4"
+    python3 "$(dirname "$0")/write_diagnostics.py" mtu_blackhole "MTU black hole: large packets silently dropped, ICMP frag-needed blocked" "Layer3_Layer4"
     ;;
 
 packet_loss)
@@ -100,7 +100,7 @@ packet_loss)
         sleep 1
         ip netns exec ns-enterprise iperf3 -c 192.168.100.10 -t 10 -J > "$OUT_DIR/iperf3_loss.json" 2>/dev/null || true
     fi
-    python3 scripts/write_diagnostics.py packet_loss "5% packet loss on SATCOM WAN via tc netem" "Layer1_Layer2"
+    python3 "$(dirname "$0")/write_diagnostics.py" packet_loss "5% packet loss on SATCOM WAN via tc netem" "Layer1_Layer2"
     ;;
 
 high_latency)
@@ -109,7 +109,7 @@ high_latency)
     ip netns exec ns-satcom tc qdisc change dev eth1 root netem delay 150ms 20ms distribution normal
     log "Running ping test..."
     ip netns exec ns-enterprise ping -c 10 192.168.100.10 | tee "$OUT_DIR/ping_latency.txt" || true
-    python3 scripts/write_diagnostics.py high_latency "300ms RTT (150ms one-way + 20ms jitter) on SATCOM WAN" "Layer1"
+    python3 "$(dirname "$0")/write_diagnostics.py" high_latency "300ms RTT (150ms one-way + 20ms jitter) on SATCOM WAN" "Layer1"
     ;;
 
 dns_failure)
@@ -119,7 +119,7 @@ dns_failure)
     log "DNS queries will now fail. Application will appear down despite connectivity."
     ip netns exec ns-enterprise ping -c 3 192.168.100.10 | tee "$OUT_DIR/ping_ok.txt" || true
     ip netns exec ns-enterprise dig +short +time=3 google.com @8.8.8.8 > "$OUT_DIR/dns_fail.txt" 2>&1 || true
-    python3 scripts/write_diagnostics.py dns_failure "DNS blocked at CE firewall, application appears down" "Layer7"
+    python3 "$(dirname "$0")/write_diagnostics.py" dns_failure "DNS blocked at CE firewall, application appears down" "Layer7"
     ;;
 
 failover)
@@ -133,7 +133,7 @@ failover)
     ip netns exec ns-satcom ip link set eth1 up
     sleep 2
     ip netns exec ns-enterprise ping -c 5 192.168.100.10 | tee "$OUT_DIR/ping_restored.txt" || true
-    python3 scripts/write_diagnostics.py failover "SATCOM link outage simulated, failover path tested" "Layer1"
+    python3 "$(dirname "$0")/write_diagnostics.py" failover "SATCOM link outage simulated, failover path tested" "Layer1"
     ;;
 
 restore)

@@ -1,5 +1,5 @@
 .PHONY: setup up down baseline inject-nat-failure inject-vpn-failure inject-bgp-failure \
-        inject-mtu-blackhole inject-loss collect analyze test clean help
+        inject-mtu-blackhole inject-loss collect analyze monitor test clean help
 
 PYTHON := python3
 LAB_SCRIPTS := lab/scripts
@@ -94,6 +94,18 @@ analyze:
 	fi; \
 	echo "Analyzing: $$LATEST"; \
 	$(PYTHON) $(ANALYZER)/root_cause_analyzer.py --input "$$LATEST"
+
+monitor:
+	@echo "[monitor] Starting live terminal dashboard..."
+	$(PYTHON) monitor.py
+
+monitor-no-api:
+	@echo "[monitor] Starting live dashboard (local state only)..."
+	$(PYTHON) monitor.py --no-api
+
+monitor-profile:
+	@echo "[monitor] Switching to profile: $(PROFILE)"
+	$(PYTHON) monitor.py --profile $(PROFILE)
 
 test:
 	@echo "[test] Running test suite..."

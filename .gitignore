@@ -1,3 +1,4 @@
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -7,26 +8,45 @@ venv/
 *.egg-info/
 dist/
 build/
+*.so
+.coverage
+htmlcov/
 
-# Lab state — not committed
-captures/*.pcap
+# Lab runtime state — never commit captures or live outputs
+captures/**/*.pcap
 experiments/*/diagnostics.json
 experiments/*/ping_*.txt
 experiments/*/iperf3_*.json
 experiments/*/traceroute.txt
+experiments/*/bgp_summary.txt
 experiments/*/routes_*.txt
+experiments/*/results.txt
 experiments/snapshot_*/
 
-# WireGuard private keys — never commit
+# WireGuard private keys — NEVER commit
 lab/vpn/wireguard/keys/
+*_private.key
+*.key
 
-# Grafana runtime state
+# Grafana persistent data
 telemetry/grafana/data/
+telemetry/grafana/grafana.db
 
 # Docker volumes
 .docker/
+volumes/
 
-# IDE
+# netem state file (tc qdisc state)
+*.netem
+
+# IDE and OS
 .idea/
 .vscode/
 *.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Local experiment outputs that should stay local
+bench_output.txt
+*.log
